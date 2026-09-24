@@ -476,7 +476,7 @@ class Suite:
         ))
         self._run("GetWebHook",  lambda: (
             w := c.get_webhook_config(),
-            f"enable={w.get('enable')}  keys={list(w.keys())[:4]}"
+            f"enable={_webhook_enabled(w)}  entries={len(w)}"
         )[-1])
 
         if self.skip_set:
@@ -486,8 +486,8 @@ class Suite:
                 get_fn     = c.get_webhook_config,
                 set_fn     = lambda v: c.set_webhook_enabled(bool(v)),
                 new_value  = 0,
-                extract_fn = lambda v: v.get("enable"),
-                restore_fn = lambda orig: c.set_webhook_enabled(bool(orig.get("enable"))),
+                extract_fn = _webhook_enabled,
+                restore_fn = lambda orig: c._http.set("SetWebHook", {"WebHook": orig}),
             ))
 
     # ══════════════════════════════════════════════════════════════════════
@@ -602,6 +602,13 @@ def _header(title: str):
     print(f"\n  {'─' * 60}")
     print(f"  {title}")
     print(f"  {'─' * 60}")
+
+
+def _webhook_enabled(w) -> int:
+    """Webhook enable flag for both the dict and the list (newer firmware) layout."""
+    if isinstance(w, list):
+        return int(any(e.get("indexEnable") for e in w))
+    return w.get("enable")
 
 
 def _vkeys(resp: dict, n: int = 4) -> str:

@@ -152,3 +152,36 @@ def test_play_tone_streams_generated_pcm(cam, monkeypatch):
     assert cam.play_tone(440, 0.25) is True
     assert sent["len"] == 8000 * 0.25 * 2
     assert sent["args"] == ("https://cam:443/api.cgi", "TOK")
+
+
+def test_motion_alarm_newer_firmware_list_layout(cam):
+    """Firmware v3.0.0.4348 reports lists of time slots instead of a dict."""
+    cam._http.responses["GetMdAlarm"] = {"MdAlarm": {
+        "useNewSens": 1,
+        "newSens": {"sens": [{"enable": 0, "sensitivity": 0}]},
+        "sens": [{"id": 0, "sensitivity": 10}, {"id": 1, "sensitivity": 20}]}}
+    m = cam.get_motion_alarm()
+    assert not m.enabled
+    assert m.sensitivity == 20
+
+
+def test_motion_alarm_new_slots_enabled(cam):
+    cam._http.responses["GetMdAlarm"] = {"MdAlarm": {
+        "newSens": {"sens": [{"enable": 1, "sensitivity": 30}, {"enable": 0, "sensitivity": 90}]},
+        "sens": []}}
+    m = cam.get_motion_alarm()
+    assert m.enabled and m.sensitivity == 30
+
+
+def test_webhook_list_layout_sets_every_entry(cam):
+    cam._http.responses["GetWebHook"] = {"WebHook": [
+        {"index": 0, "indexEnable": 0}, {"index": 1, "indexEnable": 0}]}
+    cam.set_webhook_enabled(True)
+    assert cam._http.sets[0][1] == {"WebHook": [
+        {"index": 0, "indexEnable": 1}, {"index": 1, "indexEnable": 1}]}
+
+
+def test_webhook_dict_layout_still_supported(cam):
+    cam._http.responses["GetWebHook"] = {"WebHook": {"url": "x"}}
+    cam.set_webhook_enabled(False)
+    assert cam._http.sets[0][1] == {"WebHook": {"url": "x", "enable": 0}}

@@ -385,11 +385,28 @@ class ReolinkCamera:
     # ══════════════════════════════════════════════════════════════════════
 
     def get_motion_alarm(self, channel: Optional[int] = None) -> MotionAlarmConfig:
+        """Motion detection state and sensitivity.
+
+        Older firmware reports ``enable`` and ``sens: {"sens": N}``; newer
+        firmware (e.g. v3.0.0.4348) reports lists of time-slot entries in
+        ``newSens.sens`` or ``sens``. Both layouts are handled.
+        """
         v = self._http.value(
             self._http.get("GetMdAlarm", {"channel": self._ch(channel)}), "MdAlarm") or {}
+        sens = v.get("sens", {})
+        if isinstance(sens, dict):                      # legacy layout
+            return MotionAlarmConfig(
+                enabled     = bool(v.get("enable", 0)),
+                sensitivity = sens.get("sens", 50),
+                raw         = v,
+            )
+        new_slots = (v.get("newSens") or {}).get("sens", [])
+        active = [e for e in new_slots if e.get("enable")]
+        slots = active or sens
+        levels = [e.get("sensitivity", 0) for e in slots if isinstance(e, dict)]
         return MotionAlarmConfig(
-            enabled     = bool(v.get("enable",0)),
-            sensitivity = v.get("sens",{}).get("sens",50),
+            enabled     = bool(v.get("enable", bool(active))),
+            sensitivity = max(levels) if levels else 50,
             raw         = v,
         )
 
@@ -438,12 +455,18 @@ class ReolinkCamera:
         return self._http.value(
             self._http.get("GetPushV20", {"channel": self._ch(channel)}), "Push") or {}
 
-    def get_webhook_config(self) -> dict:
+    def get_webhook_config(self):
+        """Webhook configuration: a dict, or a list of entries on newer firmware."""
         return self._http.value(self._http.get("GetWebHook"), "WebHook") or {}
 
     def set_webhook_enabled(self, enabled: bool) -> None:
+        """Enable or disable webhooks (all entries when the camera uses a list)."""
         wh = self.get_webhook_config()
-        self._http.set("SetWebHook", {"WebHook": {**wh, "enable": int(enabled)}})
+        if isinstance(wh, list):
+            wh = [{**entry, "indexEnable": int(enabled)} for entry in wh]
+        else:
+            wh = {**wh, "enable": int(enabled)}
+        self._http.set("SetWebHook", {"WebHook": wh})
 
     # ══════════════════════════════════════════════════════════════════════
     #  PTZ
