@@ -26,8 +26,8 @@ dev = ["pytest>=7"]
 version = { attr = "reolink_camera_control.__version__" }
 
 [tool.setuptools.packages.find]
-where = ["src"]
+include = ["reolink_camera_control*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/unit"]
-pythonpath = ["src"]
+pythonpath = ["."]

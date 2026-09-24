@@ -284,7 +284,7 @@ executed.
 ## Project layout
 
 ```
-src/reolink_camera_control/
+reolink_camera_control/
     camera.py       ReolinkCamera, the public API
     http.py         login, token refresh, retries
     audio.py        WAV/tone to PCM conversion, ffmpeg fallback
