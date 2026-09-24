@@ -23,9 +23,13 @@ Each test prints:
 from __future__ import annotations
 
 import argparse
+import math
 import os
+import struct
 import sys
+import tempfile
 import time
+import wave
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
@@ -528,7 +532,7 @@ class Suite:
     # ══════════════════════════════════════════════════════════════════════
 
     def phase_audio_push(self):
-        _header("Phase 12: Audio (siren and HTTP talkback)")
+        _header("Phase 12: Audio (siren and speaker playback)")
         c = self.cam
 
         if self.skip_audio:
@@ -549,22 +553,33 @@ class Suite:
             f"available={c.ffmpeg_available()}  (WAV and tones need no extra tools)"
         )
 
-        # Audio push via HTTP talkback is not supported by every model/firmware.
-        # The camera answers with a JSON error; report that instead of a false PASS.
-        for label, fn in [
-            ("play_tone 440Hz 1s", lambda: c.play_tone(440.0, 1.0, amplitude=0.6)),
-            ("play_tone 1000Hz 0.5s", lambda: c.play_tone(1000.0, 0.5, amplitude=0.5)),
-        ]:
+        self._run("play_tone 440Hz 1s", lambda: (
+            c.play_tone(440.0, 1.0, amplitude=0.6),
+            "sent to camera speaker (Baichuan talk)"
+        )[-1])
+        self._run("play_tone 1000Hz 0.5s", lambda: (
+            c.play_tone(1000.0, 0.5, amplitude=0.6),
+            "sent to camera speaker (Baichuan talk)"
+        )[-1])
+
+        def play_wav():
+            path = Path(tempfile.gettempdir()) / "reolink_live_test.wav"
+            rate = 44100
+            with wave.open(str(path), "wb") as wf:      # 44.1 kHz stereo, C-E-G-C
+                wf.setnchannels(2)
+                wf.setsampwidth(2)
+                wf.setframerate(rate)
+                for freq in (523, 659, 784, 1047):
+                    for i in range(int(rate * 0.4)):
+                        v = int(20000 * math.sin(2 * math.pi * freq * i / rate))
+                        wf.writeframes(struct.pack("<hh", v, v))
             try:
-                fn()
-                self.results.append(r := Result(label, "PASS", "streamed to camera speaker"))
-                print(r)
-            except ReolinkAudioError as e:
-                if "rejected HTTP talkback" in str(e):
-                    self._skip(label, "camera rejects HTTP talkback (unsupported firmware)")
-                else:
-                    self.results.append(r := Result(label, "FAIL", str(e)[:120]))
-                    print(r)
+                c.play_audio_file(str(path))
+            finally:
+                path.unlink(missing_ok=True)
+            return "44.1 kHz stereo WAV converted and played"
+
+        self._run("play_audio_file (WAV, rising melody)", play_wav)
 
     def phase_misc(self):
         _header("Phase 13: Misc")
