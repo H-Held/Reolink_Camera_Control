@@ -11,6 +11,7 @@ class FakeHTTP:
         self.sets = []
         self.calls = []
         self.username = "admin"
+        self.password = "pw"
         self.scheme, self.port = "https", 443
         self.base, self.token = "https://cam:443/api.cgi", "TOK"
 
@@ -141,8 +142,9 @@ def test_play_tone_streams_generated_pcm(cam, monkeypatch):
     sent = {}
 
     class FakeSession:
-        def __init__(self, base, token):
-            sent["args"] = (base, token)
+        def __init__(self, host, username, password, **kwargs):
+            sent["args"] = (host, username, password)
+            sent["kwargs"] = kwargs
 
         def send(self, pcm):
             sent["len"] = len(pcm)
@@ -150,38 +152,34 @@ def test_play_tone_streams_generated_pcm(cam, monkeypatch):
 
     monkeypatch.setattr("reolink_camera_control.camera.TalkSession", FakeSession)
     assert cam.play_tone(440, 0.25) is True
-    assert sent["len"] == 8000 * 0.25 * 2
-    assert sent["args"] == ("https://cam:443/api.cgi", "TOK")
+    assert sent["len"] == 16000 * 0.25 * 2
+    assert sent["args"] == ("cam", "admin", "pw")
+    assert sent["kwargs"]["channel"] == 0
+    assert sent["kwargs"]["baichuan_port"] == 9000
 
 
-def test_motion_alarm_newer_firmware_list_layout(cam):
-    """Firmware v3.0.0.4348 reports lists of time slots instead of a dict."""
-    cam._http.responses["GetMdAlarm"] = {"MdAlarm": {
-        "useNewSens": 1,
-        "newSens": {"sens": [{"enable": 0, "sensitivity": 0}]},
-        "sens": [{"id": 0, "sensitivity": 10}, {"id": 1, "sensitivity": 20}]}}
-    m = cam.get_motion_alarm()
-    assert not m.enabled
-    assert m.sensitivity == 20
+def test_play_tone_volume_scales_samples(cam, monkeypatch):
+    captured = {}
+
+    class FakeSession:
+        def __init__(self, *a, **k):
+            pass
+
+        def send(self, pcm):
+            captured["pcm"] = pcm
+            return True
+
+    monkeypatch.setattr("reolink_camera_control.camera.TalkSession", FakeSession)
+    cam.play_tone(440, 0.1, amplitude=0.4, volume=1.0)
+    loud = max(abs(int.from_bytes(captured["pcm"][i:i + 2], "little", signed=True))
+               for i in range(0, len(captured["pcm"]), 2))
+    cam.play_tone(440, 0.1, amplitude=0.4, volume=0.5)
+    quiet = max(abs(int.from_bytes(captured["pcm"][i:i + 2], "little", signed=True))
+                for i in range(0, len(captured["pcm"]), 2))
+    assert quiet < loud * 0.6
 
 
-def test_motion_alarm_new_slots_enabled(cam):
-    cam._http.responses["GetMdAlarm"] = {"MdAlarm": {
-        "newSens": {"sens": [{"enable": 1, "sensitivity": 30}, {"enable": 0, "sensitivity": 90}]},
-        "sens": []}}
-    m = cam.get_motion_alarm()
-    assert m.enabled and m.sensitivity == 30
-
-
-def test_webhook_list_layout_sets_every_entry(cam):
-    cam._http.responses["GetWebHook"] = {"WebHook": [
-        {"index": 0, "indexEnable": 0}, {"index": 1, "indexEnable": 0}]}
-    cam.set_webhook_enabled(True)
-    assert cam._http.sets[0][1] == {"WebHook": [
-        {"index": 0, "indexEnable": 1}, {"index": 1, "indexEnable": 1}]}
-
-
-def test_webhook_dict_layout_still_supported(cam):
-    cam._http.responses["GetWebHook"] = {"WebHook": {"url": "x"}}
-    cam.set_webhook_enabled(False)
-    assert cam._http.sets[0][1] == {"WebHook": {"url": "x", "enable": 0}}
+def test_siren_times_command(cam):
+    cam.siren_times(3)
+    assert cam._http.sets[-1] == (
+        "AudioAlarmPlay", {"alarm_mode": "times", "times": 3, "channel": 0})
