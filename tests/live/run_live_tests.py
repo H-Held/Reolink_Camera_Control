@@ -336,6 +336,20 @@ class Suite:
                          "SetWhiteLed bright", "SetPowerLed"]:
                 self._skip(f"{name} (roundtrip)", "--skip-set")
         else:
+            def white_led_on_2s():
+                orig = c.get_white_led().raw
+                try:
+                    c.set_white_led(state=1, mode=0, bright=100)
+                    on = c.get_white_led().state
+                    time.sleep(2.0)
+                finally:
+                    c._http.set("SetWhiteLed", {"WhiteLed": orig})
+                off = c.get_white_led().state
+                assert on == 1, f"LED did not switch on (state={on})"
+                assert off == orig.get("state"), f"LED not restored (state={off})"
+                return "white LED on for 2 s, then restored"
+
+            self._run("White LED on 2 s, then off", white_led_on_2s)
             self._run("SetIrLights (roundtrip)", lambda: self._roundtrip(
                 get_fn     = c.get_ir_lights,
                 set_fn     = c.set_ir_lights,
