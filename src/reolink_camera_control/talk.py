@@ -47,15 +47,31 @@ class TalkSession:
     def _stream_thread(self) -> None:
         url = f"{self._base}?cmd=StartTalk&token={self._token}"
         try:
-            requests.post(
+            r = requests.post(
                 url,
                 data=self._body(),
                 headers={"Content-Type": "application/octet-stream"},
                 verify=False,
                 timeout=(len(self._pcm) / (TALK_RATE * TALK_WIDTH)) + 10,
             )
+            self._check_response(r)
         except Exception as exc:
             self._error = exc
+
+    @staticmethod
+    def _check_response(r) -> None:
+        """Raise if the camera answered with a JSON error instead of accepting audio."""
+        try:
+            data = r.json()
+        except ValueError:
+            return  # not JSON: the camera consumed the stream
+        first = data[0] if isinstance(data, list) and data else data
+        if isinstance(first, dict) and first.get("code", 0) != 0:
+            raise ReolinkAudioError(
+                "Camera rejected HTTP talkback (StartTalk): "
+                f"{first.get('error', first)}. This camera/firmware does not "
+                "support audio push over HTTP; use siren_on()/siren_off() instead."
+            )
 
     def send(self, pcm: bytes) -> bool:
         """Stream *pcm* to the speaker and block until it has been sent.
@@ -72,6 +88,8 @@ class TalkSession:
 
         self._stop_talk()
 
+        if isinstance(self._error, ReolinkAudioError):
+            raise self._error
         if self._error:
             # The camera often resets the connection once it has received
             # everything - that is normal, not an error.

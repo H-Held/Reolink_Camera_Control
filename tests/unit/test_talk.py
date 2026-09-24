@@ -16,6 +16,12 @@ def _patch(monkeypatch, start_error=None):
             if start_error:
                 raise start_error
 
+            class NonJson:  # camera consumed the stream, no JSON body
+                @staticmethod
+                def json():
+                    raise ValueError("no json")
+            return NonJson()
+
     monkeypatch.setattr(talk_mod.requests, "post", fake_post)
     return posts
 
@@ -42,5 +48,27 @@ def test_connection_reset_is_not_an_error(monkeypatch):
 def test_other_errors_raise_but_still_stop(monkeypatch):
     posts = _patch(monkeypatch, start_error=ValueError("bad payload"))
     with pytest.raises(ReolinkAudioError):
+        TalkSession("http://c/api.cgi", "T").send(b"\x00" * CHUNK_BYTES)
+    assert "StopTalk" in posts[-1]
+
+
+def test_json_error_from_camera_is_reported(monkeypatch):
+    """A camera without HTTP talkback answers with a JSON error; do not report success."""
+    class Resp:
+        @staticmethod
+        def json():
+            return [{"cmd": "Unknown", "code": 1,
+                     "error": {"detail": "please login first", "rspCode": -6}}]
+
+    posts = []
+
+    def fake_post(url, **kwargs):
+        posts.append(url)
+        if "StartTalk" in url:
+            list(kwargs["data"])
+            return Resp()
+
+    monkeypatch.setattr(talk_mod.requests, "post", fake_post)
+    with pytest.raises(ReolinkAudioError, match="rejected HTTP talkback"):
         TalkSession("http://c/api.cgi", "T").send(b"\x00" * CHUNK_BYTES)
     assert "StopTalk" in posts[-1]
