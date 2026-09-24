@@ -8,7 +8,7 @@ from typing import Optional
 import requests
 
 from .audio import (ffmpeg_available as _ffmpeg_available, generate_tone_pcm,
-                    load_pcm)
+                    load_pcm, scale_pcm)
 from .exceptions import ReolinkCommandError
 from .http import ReolinkHTTP
 from .models import (AiConfig, AudioConfig, DeviceInfo, EncoderSettings,
@@ -29,7 +29,8 @@ class ReolinkCamera:
     """
 
     def __init__(self, host: str, username: str = "admin", password: str = "",
-                 port: int = 443, scheme: str = "https", channel: int = 0):
+                 port: int = 443, scheme: str = "https", channel: int = 0,
+                 baichuan_port: int = 9000):
         """
         Args:
             host:     Camera IP or hostname.
@@ -38,8 +39,11 @@ class ReolinkCamera:
             port:     API port (default 443 for HTTPS, 80 for HTTP).
             scheme:   "https" (default) or "http".
             channel:  Default channel index (default 0).
+            baichuan_port: Port of the Baichuan protocol used for audio push
+                      (default 9000).
         """
         self.host    = host
+        self._bc_port = baichuan_port
         self._ch_def = channel
         self._http   = ReolinkHTTP(host, username, password, port, scheme)
 
@@ -316,6 +320,13 @@ class ReolinkCamera:
                        {"alarm_mode": "manul", "manual_switch": 1, "channel": 0},
                        settle=False)
 
+    def siren_times(self, times: int = 1, channel: Optional[int] = None) -> None:
+        """Play the built-in alarm sound *times* times."""
+        self._http.set("AudioAlarmPlay",
+                       {"alarm_mode": "times", "times": times,
+                        "channel": self._ch(channel)},
+                       settle=False)
+
     def siren_off(self) -> None:
         """Stop manual HTTP siren."""
         self._http.set("AudioAlarmPlay",
@@ -323,16 +334,24 @@ class ReolinkCamera:
                        settle=False)
 
     # ══════════════════════════════════════════════════════════════════════
-    #  Audio PUSH  –  StartTalk / StopTalk  (pure HTTP, no extra binaries)
+    #  Audio PUSH  –  Baichuan talk protocol (port 9000, via reolink-aio)
     # ══════════════════════════════════════════════════════════════════════
 
-    def play_audio_file(self, file_path: str,
+    def _talk(self, pcm: bytes, channel: Optional[int]) -> bool:
+        http = self._http
+        return TalkSession(
+            self.host, http.username, http.password,
+            channel=self._ch(channel), port=http.port,
+            use_https=(http.scheme == "https"), baichuan_port=self._bc_port,
+        ).send(pcm)
+
+    def play_audio_file(self, file_path: str, volume: float = 1.0,
                         channel: Optional[int] = None) -> bool:
         """
         Play an audio file through the camera speaker.
 
-        Uses the camera's built-in HTTP talkback endpoint (StartTalk/StopTalk).
-        No neolink, no Docker, no Baichuan protocol — just HTTP + Python.
+        The audio is sent through the camera's Baichuan protocol (TCP port
+        9000), converted to ADPCM in pure Python. No Docker or neolink needed.
 
         Supported formats (no extra tools):
             .wav
@@ -340,41 +359,42 @@ class ReolinkCamera:
         Supported formats (requires ffmpeg in PATH):
             .mp3  .aac  .m4a  .ogg  .flac  .wma  .opus
 
-        All audio is automatically resampled to 8 kHz mono 16-bit PCM
-        before streaming to the camera.
+        All audio is automatically resampled to 16 kHz mono 16-bit PCM
+        before it is encoded and streamed to the camera. Playback runs in
+        real time, so the call blocks for the length of the audio.
 
         Args:
             file_path:  Path to the audio file.
+            volume:     Gain factor, 1.0 = unchanged, up to about 2.0.
             channel:    Camera channel index (default: instance channel).
 
         Returns:
             True on success.
 
         Raises:
-            ReolinkAudioError: Conversion failed or stream error.
+            ReolinkAudioError: Conversion failed or the camera refused the audio.
         """
-        pcm = load_pcm(str(file_path))
-        return TalkSession(self._http.base, self._http.token).send(pcm)
+        pcm = scale_pcm(load_pcm(str(file_path)), volume)
+        return self._talk(pcm, channel)
 
     def play_tone(self, freq: float = 440.0, duration: float = 3.0,
-                  amplitude: float = 0.7,
+                  amplitude: float = 0.7, volume: float = 1.0,
                   channel: Optional[int] = None) -> bool:
         """
         Generate and play a sine-wave tone through the camera speaker.
 
-        Zero external dependencies — pure Python math.
-
         Args:
             freq:      Frequency in Hz (440=A4, 1000=alert, 2000=hi-alert).
             duration:  Length in seconds.
-            amplitude: Volume 0.0–1.0 (default 0.7).
+            amplitude: Tone level 0.0-1.0 (default 0.7).
+            volume:    Additional gain factor, 1.0 = unchanged.
             channel:   Camera channel index.
 
         Returns:
             True on success.
         """
-        pcm = generate_tone_pcm(freq, duration, amplitude)
-        return TalkSession(self._http.base, self._http.token).send(pcm)
+        pcm = scale_pcm(generate_tone_pcm(freq, duration, amplitude), volume)
+        return self._talk(pcm, channel)
 
     def ffmpeg_available(self) -> bool:
         """Return True if ffmpeg is installed (needed for MP3/AAC/OGG/FLAC)."""

@@ -1,7 +1,8 @@
 """Audio helpers for the camera talkback stream.
 
-The camera speaker expects raw PCM: 8 000 Hz, mono, 16-bit little endian.
-WAV files and generated tones are handled with the standard library only
+The camera speaker is fed with 16 000 Hz, mono, 16-bit little endian PCM
+(encoded to ADPCM in ``adpcm.py``). WAV files and generated tones are
+handled with the standard library only
 (``audioop`` was removed in Python 3.13, so it is not used here).
 Other formats (MP3, AAC, ...) are converted through an ``ffmpeg`` binary.
 """
@@ -20,12 +21,9 @@ from pathlib import Path
 
 from .exceptions import ReolinkAudioError
 
-TALK_RATE = 8000        # Hz
+TALK_RATE = 16000       # Hz
 TALK_CHANNELS = 1       # mono
 TALK_WIDTH = 2          # bytes per sample (16-bit)
-CHUNK_MS = 20           # ms per streamed chunk
-CHUNK_SAMPLES = int(TALK_RATE * CHUNK_MS / 1000)
-CHUNK_BYTES = CHUNK_SAMPLES * TALK_WIDTH
 
 # Extensions that the stdlib ``wave`` module cannot read.
 NEEDS_FFMPEG = {".mp3", ".aac", ".m4a", ".wma", ".opus",
@@ -89,8 +87,8 @@ def _pack_pcm16(samples: list[int]) -> bytes:
     return out.tobytes()
 
 
-def wav_to_pcm8k(wav_path: str) -> bytes:
-    """Read a WAV file and return PCM at 8 000 Hz, mono, 16-bit LE.
+def wav_to_pcm(wav_path: str) -> bytes:
+    """Read a WAV file and return PCM at 16 000 Hz, mono, 16-bit LE.
 
     Handles 8/16/24/32-bit integer WAVs with any channel count and rate.
     """
@@ -113,7 +111,7 @@ def wav_to_pcm8k(wav_path: str) -> bytes:
 
 def generate_tone_pcm(freq: float, duration: float,
                       amplitude: float = 0.7) -> bytes:
-    """Generate a sine tone as raw PCM (8 kHz, 16-bit, mono)."""
+    """Generate a sine tone as raw PCM (16 kHz, 16-bit, mono)."""
     if duration < 0 or freq < 0:
         raise ReolinkAudioError("freq and duration must not be negative")
     n = int(TALK_RATE * duration)
@@ -123,6 +121,15 @@ def generate_tone_pcm(freq: float, duration: float,
         val = int(amplitude * 32767 * math.sin(twopi_f * i))
         struct.pack_into("<h", buf, i * 2, max(-32768, min(32767, val)))
     return bytes(buf)
+
+
+def scale_pcm(pcm: bytes, volume: float) -> bytes:
+    """Scale 16-bit PCM by *volume* (1.0 = unchanged), clipping at full scale."""
+    if volume == 1.0 or not pcm:
+        return pcm
+    if volume < 0:
+        raise ReolinkAudioError("volume must not be negative")
+    return _pack_pcm16([int(s * volume) for s in _decode_samples(pcm, 2)])
 
 
 def ffmpeg_available() -> bool:
@@ -135,7 +142,7 @@ def ffmpeg_available() -> bool:
 
 
 def convert_with_ffmpeg(src: str) -> str:
-    """Convert any audio file to an 8 kHz mono 16-bit temporary WAV file.
+    """Convert any audio file to an 16 kHz mono 16-bit temporary WAV file.
 
     The caller is responsible for deleting the returned file.
     """
@@ -161,7 +168,7 @@ def convert_with_ffmpeg(src: str) -> str:
 
 
 def load_pcm(file_path: str) -> bytes:
-    """Load an audio file as raw PCM (8 kHz, mono, 16-bit LE).
+    """Load an audio file as raw PCM (16 kHz, mono, 16-bit LE).
 
     ``.wav`` needs no extra tools; every other supported format goes
     through ffmpeg first.
@@ -170,12 +177,12 @@ def load_pcm(file_path: str) -> bytes:
     if ext in NEEDS_FFMPEG:
         tmp = convert_with_ffmpeg(file_path)
         try:
-            return wav_to_pcm8k(tmp)
+            return wav_to_pcm(tmp)
         finally:
             if os.path.exists(tmp):
                 os.unlink(tmp)
     if ext == ".wav":
-        return wav_to_pcm8k(file_path)
+        return wav_to_pcm(file_path)
     raise ReolinkAudioError(
         f"Unsupported audio format '{ext}'.\n"
         f"Native (no tools): .wav\n"
