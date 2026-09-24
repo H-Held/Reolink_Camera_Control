@@ -12,17 +12,22 @@ camera speaker), detection, recording, notifications and PTZ.
 | Camera | Reolink RLC-540A |
 | Firmware | v3.0.0.4348_2411261180 |
 
-Other Reolink cameras that use the same `api.cgi` interface will likely work,
-but only the model above has been verified. Features that a model does not
-support (for example PTZ on a fixed camera) raise `ReolinkCommandError` or
-return empty results.
+All features in the function reference were run against this camera and
+firmware, including playing sound through the camera speaker (checked with a
+microphone). Other Reolink cameras that use the same `api.cgi` interface will
+likely work, but only the model above has been verified. Features that a model
+does not support (for example PTZ on a fixed camera) raise
+`ReolinkCommandError` or return empty results. Some firmware versions return
+list-shaped answers for motion detection and webhooks; both layouts are handled.
 
 ## Requirements
 
-- Python 3.9 or newer (tested on 3.14)
-- `requests` (installed automatically)
+- Python 3.11 or newer (tested on 3.14)
+- `requests` and `reolink-aio` (installed automatically)
 - Optional: `ffmpeg` in `PATH` to play MP3, AAC, M4A, OGG or FLAC files.
   WAV files and generated tones need no extra tools.
+- Network access to the camera on the API port (443 or 80) and, for audio
+  playback, on the Baichuan port 9000.
 
 ## Installation
 
@@ -153,24 +158,40 @@ cam.set_day_night_mode("Auto")
 | `get_audio_alarm(channel=None)` | Siren-on-event configuration |
 | `set_audio_alarm_enabled(enabled, channel=None)` | Enable or disable the event siren |
 | `siren_on()` / `siren_off()` | Manual siren (firmware support varies) |
-| `play_tone(freq=440.0, duration=3.0, amplitude=0.7, channel=None)` | Plays a sine tone through the camera speaker |
-| `play_audio_file(file_path, channel=None)` | Plays an audio file through the camera speaker |
+| `siren_times(times=1, channel=None)` | Plays the built-in alarm sound N times |
+| `play_tone(freq=440.0, duration=3.0, amplitude=0.7, volume=1.0, channel=None)` | Plays a sine tone through the camera speaker |
+| `play_audio_file(file_path, volume=1.0, channel=None)` | Plays a local audio file through the camera speaker |
 | `ffmpeg_available()` | True if `ffmpeg` was found in `PATH` |
 
-**Compatibility note:** On the tested RLC-540A with firmware
-v3.0.0.4348_2411261180 the camera rejects HTTP talkback (`TalkAbility: not
-support`), so `play_tone` and `play_audio_file` raise `ReolinkAudioError`
-there. The manual siren (`siren_on()` / `siren_off()`) works on that firmware.
-Other models or firmware versions may support talkback.
-
-Audio is sent through the camera's HTTP talkback endpoint (`StartTalk` and
-`StopTalk`). The camera expects PCM, 8 000 Hz, mono, 16-bit; the library
-converts WAV input automatically (any sample rate, channel count, and 8, 16,
-24 or 32 bit). Other formats are converted with `ffmpeg` first. Playback runs
-in real time, so the call blocks for the length of the audio.
+Audio is sent through the camera's Baichuan protocol (TCP port 9000): the
+library reads the camera's talk format, converts your audio to 16 kHz mono
+PCM (WAV natively, other formats through `ffmpeg`), encodes it to IMA ADPCM
+in pure Python and streams it in real time. No Docker and no external
+program is needed for WAV files. The call blocks for the length of the
+audio. `volume` is a gain factor (1.0 = unchanged, up to about 2.0, clipped
+at full scale). If the camera does not support talk, or another talk session
+blocks the speaker, `ReolinkAudioError` is raised.
 
 ```python
 cam.play_audio_file("alert.wav")
+cam.play_audio_file("song.mp3", volume=0.8)   # needs ffmpeg
+cam.play_tone(880, duration=2)
+```
+
+The audio port can be changed with `ReolinkCamera(..., baichuan_port=9000)`.
+
+### Command line
+
+Stored audio files can be played at any time without writing code. Connection
+settings are read from `.env` in the current directory (see below).
+
+```bash
+python -m reolink_camera_control play alert.wav
+python -m reolink_camera_control play song.mp3 --volume 0.8
+python -m reolink_camera_control tone --freq 880 --duration 2
+python -m reolink_camera_control siren --times 2
+python -m reolink_camera_control snap picture.jpg
+python -m reolink_camera_control info
 ```
 
 ### Detection
@@ -215,7 +236,7 @@ All exceptions derive from `ReolinkError`:
 | `ReolinkAuthError` | Login failed (wrong user or password) |
 | `ReolinkConnectionError` | The camera cannot be reached |
 | `ReolinkCommandError` | The camera rejected a command or returned an error |
-| `ReolinkAudioError` | Audio file missing, unsupported, or conversion failed |
+| `ReolinkAudioError` | Audio file missing or unsupported, conversion failed, or the camera refused the audio |
 
 ```python
 from reolink_camera_control import ReolinkCamera, ReolinkAuthError, ReolinkConnectionError
@@ -258,8 +279,9 @@ The tests are split into two groups.
 ### Offline tests (no camera needed)
 
 These use mocked network calls and check that the code runs without errors:
-audio conversion, tone generation, login and retry logic, response parsing,
-the talkback session and the public API.
+audio conversion, ADPCM encoding (verified against a reference decoder), the
+talk message flow, login and retry logic, response parsing, the command line
+and the public API.
 
 ```bash
 pip install -e ".[dev]"
@@ -274,11 +296,13 @@ python tests/live/run_live_tests.py               # also runs set/restore checks
 python tests/live/run_live_tests.py --skip-audio  # no sound from the speaker
 ```
 
+The full run also switches the white LED on for 2 seconds, plays the siren for
+2 seconds and plays two tones and a short melody through the speaker.
+
 Names set by the tests must not contain underscores; the camera rejects them
 (`SetDevName` / `SetOsd` fail). Without `--skip-set`, the script temporarily changes settings (device name,
 image brightness, LEDs, volume and others), checks the result and restores the
-original value. Run the read-only variant first. The audio phase plays short
-tones through the camera speaker. The reboot command is only probed, never
+original value. Run the read-only variant first. The reboot command is only probed, never
 executed.
 
 ## Project layout
@@ -288,7 +312,9 @@ reolink_camera_control/
     camera.py       ReolinkCamera, the public API
     http.py         login, token refresh, retries
     audio.py        WAV/tone to PCM conversion, ffmpeg fallback
-    talk.py         talkback streaming to the speaker
+    adpcm.py        ADPCM encoder and talk packet format
+    talk.py         audio push to the speaker (Baichuan protocol)
+    __main__.py     command line interface
     models.py       data classes returned by the API
     exceptions.py   exception hierarchy
 tests/
@@ -299,8 +325,12 @@ tests/
 ## License
 
 GPL-3.0-or-later, see [LICENSE](LICENSE). The dependencies (requests: Apache-2.0,
-urllib3: MIT, pytest: MIT) are compatible with the GPL-3.0; details are in
+reolink-aio: MIT, urllib3: MIT, pytest: MIT) are compatible with the GPL-3.0; details are in
 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+
+The speaker audio packet format follows the documented behaviour of the
+open source [neolink](https://github.com/QuantumEntangledAndy/neolink)
+project; the implementation here is independent Python code.
 
 This project is not affiliated with Reolink.
 
