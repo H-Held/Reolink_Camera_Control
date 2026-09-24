@@ -12,6 +12,17 @@ camera speaker), detection, recording, notifications and PTZ.
 | Camera | Reolink RLC-540A |
 | Firmware | v3.0.0.4348_2411261180 |
 
+The firmware was current at the time of testing: the camera reported no newer
+version (`CheckFirmware` returned `newFirmware: 0`) on 2026-09-24.
+
+Test results with this camera and firmware:
+
+| Test suite | Result |
+|------------|--------|
+| Offline tests (`pytest`, no camera) | 65 passed |
+| Live tests (`tests/live/run_live_tests.py`, all set/restore checks, LEDs, siren and audio) | 63 passed, 0 failed, 0 skipped |
+| Speaker audio | Verified with a microphone: tones at 500 Hz and 1000 Hz and a four-note melody arrived at the expected frequencies |
+
 All features in the function reference were run against this camera and
 firmware, including playing sound through the camera speaker (checked with a
 microphone). Other Reolink cameras that use the same `api.cgi` interface will
