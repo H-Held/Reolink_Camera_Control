@@ -157,6 +157,12 @@ cam.set_day_night_mode("Auto")
 | `play_audio_file(file_path, channel=None)` | Plays an audio file through the camera speaker |
 | `ffmpeg_available()` | True if `ffmpeg` was found in `PATH` |
 
+**Compatibility note:** On the tested RLC-540A with firmware
+v3.0.0.4348_2411261180 the camera rejects HTTP talkback (`TalkAbility: not
+support`), so `play_tone` and `play_audio_file` raise `ReolinkAudioError`
+there. The manual siren (`siren_on()` / `siren_off()`) works on that firmware.
+Other models or firmware versions may support talkback.
+
 Audio is sent through the camera's HTTP talkback endpoint (`StartTalk` and
 `StopTalk`). The camera expects PCM, 8 000 Hz, mono, 16-bit; the library
 converts WAV input automatically (any sample rate, channel count, and 8, 16,
@@ -268,7 +274,8 @@ python tests/live/run_live_tests.py               # also runs set/restore checks
 python tests/live/run_live_tests.py --skip-audio  # no sound from the speaker
 ```
 
-Without `--skip-set`, the script temporarily changes settings (device name,
+Names set by the tests must not contain underscores; the camera rejects them
+(`SetDevName` / `SetOsd` fail). Without `--skip-set`, the script temporarily changes settings (device name,
 image brightness, LEDs, volume and others), checks the result and restores the
 original value. Run the read-only variant first. The audio phase plays short
 tones through the camera speaker. The reboot command is only probed, never

@@ -160,7 +160,7 @@ class Suite:
             self._run("SetDevName (roundtrip)", lambda: self._roundtrip(
                 get_fn     = c.get_device_name,
                 set_fn     = c.set_device_name,
-                new_value  = "RLC540A_Test",
+                new_value  = "RLC540A Test",
                 extract_fn = lambda v: v,
                 restore_fn = lambda orig: c.set_device_name(orig),
             ))
@@ -279,7 +279,7 @@ class Suite:
             self._run("SetOsd name (roundtrip)", lambda: self._roundtrip(
                 get_fn     = lambda: c.get_osd().get("osdChannel", {}).get("name", ""),
                 set_fn     = c.set_osd_channel_name,
-                new_value  = "TestCam_API",
+                new_value  = "TestCam API",
                 extract_fn = lambda v: v,
                 restore_fn = lambda orig: c.set_osd_channel_name(orig),
             ))
@@ -514,33 +514,43 @@ class Suite:
     # ══════════════════════════════════════════════════════════════════════
 
     def phase_audio_push(self):
-        _header("Phase 12: Audio Push  (HTTP StartTalk/StopTalk \u2013 no extra tools)")
+        _header("Phase 12: Audio (siren and HTTP talkback)")
         c = self.cam
 
         if self.skip_audio:
-            for name in ["ffmpeg check", "Tone 440Hz 1s", "Tone 880Hz 1s", "Tone 1000Hz 0.5s"]:
+            for name in ["Siren on/off", "ffmpeg check", "Tone 440Hz 1s",
+                         "Tone 880Hz 1s", "Tone 1000Hz 0.5s"]:
                 self._skip(name, "--skip-audio")
             return
 
-        # ffmpeg only needed for non-WAV; tones work with zero extra deps
+        def siren():
+            c.siren_on()
+            time.sleep(2.0)
+            c.siren_off()
+            return "siren played for 2 s (listen at the camera)"
+
+        self._run("Siren on/off (2 s, audible)", siren)
+
         self._run("ffmpeg availability (MP3/AAC/OGG/FLAC only)", lambda:
             f"available={c.ffmpeg_available()}  (WAV and tones need no extra tools)"
         )
 
-        self._run("play_tone 440Hz 1s  (A4, pure Python)", lambda: (
-            ok := c.play_tone(440.0, 1.0, amplitude=0.6),
-            "streamed to camera speaker" if ok else "send failed"
-        )[-1])
-
-        self._run("play_tone 880Hz 1s  (A5, pure Python)", lambda: (
-            ok := c.play_tone(880.0, 1.0, amplitude=0.6),
-            "streamed to camera speaker" if ok else "send failed"
-        )[-1])
-
-        self._run("play_tone 1000Hz 0.5s  (alert, pure Python)", lambda: (
-            ok := c.play_tone(1000.0, 0.5, amplitude=0.5),
-            "streamed to camera speaker" if ok else "send failed"
-        )[-1])
+        # Audio push via HTTP talkback is not supported by every model/firmware.
+        # The camera answers with a JSON error; report that instead of a false PASS.
+        for label, fn in [
+            ("play_tone 440Hz 1s", lambda: c.play_tone(440.0, 1.0, amplitude=0.6)),
+            ("play_tone 1000Hz 0.5s", lambda: c.play_tone(1000.0, 0.5, amplitude=0.5)),
+        ]:
+            try:
+                fn()
+                self.results.append(r := Result(label, "PASS", "streamed to camera speaker"))
+                print(r)
+            except ReolinkAudioError as e:
+                if "rejected HTTP talkback" in str(e):
+                    self._skip(label, "camera rejects HTTP talkback (unsupported firmware)")
+                else:
+                    self.results.append(r := Result(label, "FAIL", str(e)[:120]))
+                    print(r)
 
     def phase_misc(self):
         _header("Phase 13: Misc")
