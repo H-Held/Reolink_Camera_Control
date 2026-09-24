@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """
-test_reolink.py  –  Comprehensive feature test for ReolinkCamera library
+run_live_tests.py  –  Live feature test against a real Reolink camera
 
 Usage:
-    python3 test_reolink.py                      # reads .env / REOLINK_* variables
-    python3 test_reolink.py --host 192.168.1.100 --user admin --password mypass
-    python3 test_reolink.py --skip-set      # GET tests only (zero camera changes)
-    python3 test_reolink.py --skip-audio    # skip audio push tests
+    python tests/live/run_live_tests.py            # reads .env / REOLINK_* variables
+    python tests/live/run_live_tests.py --host 192.168.1.100 --user admin --password mypass
+    python tests/live/run_live_tests.py --skip-set     # GET tests only (no camera changes)
+    python tests/live/run_live_tests.py --skip-audio   # skip audio push tests
 
-Dependencies:
-    pip install requests               ← required for everything
-    pip install reolink-aio            ← required ONLY for audio push tests
+Setup:
+    pip install -e .                   # install the library
+    copy .env.example .env             # then fill in camera IP, user and password
+
+Set tests change a setting, verify it and restore the original value.
 
 Each test prints:
     [PASS]  feature name .............. result detail
@@ -30,13 +32,14 @@ from pathlib import Path
 from typing import Callable, Optional
 
 try:
-    from reolink_camera import (
+    from reolink_camera_control import (
         ReolinkCamera,
         ReolinkError, ReolinkAuthError, ReolinkCommandError,
         ReolinkConnectionError, ReolinkAudioError,
     )
 except ImportError:
-    print("[ERROR] reolink_camera.py not found. Place it in the same directory.")
+    print("[ERROR] Package 'reolink_camera_control' is not installed.")
+    print("        Run 'pip install -e .' from the repository root first.")
     sys.exit(1)
 
 
@@ -507,7 +510,7 @@ class Suite:
         )[-1])
 
     # ══════════════════════════════════════════════════════════════════════
-    #  Phase 12 – Audio push (reolink-aio / Baichuan)
+    #  Phase 12 – Audio push (HTTP talkback)
     # ══════════════════════════════════════════════════════════════════════
 
     def phase_audio_push(self):
@@ -622,9 +625,14 @@ def _load_dotenv(path: Path) -> None:
 
 
 def main():
-    _load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+    # Box-drawing characters need UTF-8 (Windows consoles default to cp1252).
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
 
-    p = argparse.ArgumentParser(description="Reolink camera comprehensive test")
+    _load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+
+    p = argparse.ArgumentParser(description="Reolink camera live test")
     p.add_argument("--host",       default=os.environ.get("REOLINK_HOST"),
                    help="Camera IP/hostname (env: REOLINK_HOST)")
     p.add_argument("--user",       default=os.environ.get("REOLINK_USER"),
