@@ -43,7 +43,7 @@ list-shaped answers for motion detection and webhooks; both layouts are handled.
 ## Installation
 
 ```bash
-git clone https://github.com/<your-user>/Reolink_Camera_Control.git
+git clone https://github.com/H-Held/Reolink_Camera_Control.git
 cd Reolink_Camera_Control
 pip install -e .          # library only
 pip install -e ".[dev]"   # library plus pytest
