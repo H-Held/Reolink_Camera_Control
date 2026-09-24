@@ -10,7 +10,7 @@ camera speaker), detection, recording, notifications and PTZ.
 | Item | Value |
 |------|-------|
 | Camera | Reolink RLC-540A |
-| Firmware | TODO: add the firmware version shown in the Reolink app or web UI (Device Info) |
+| Firmware | v3.0.0.4348_2411261180 |
 
 Other Reolink cameras that use the same `api.cgi` interface will likely work,
 but only the model above has been verified. Features that a model does not
